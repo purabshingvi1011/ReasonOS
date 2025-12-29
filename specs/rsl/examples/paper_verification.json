@@ -1,0 +1,126 @@
+{
+  "rsl_version": "0.1",
+  "task": {
+    "task_id": "task-paper-001",
+    "objective": "Verify whether the paragraph's claim is supported by the provided research paper.",
+    "domain": "research_verification",
+    "created_at": "2025-12-29T09:00:00Z",
+    "inputs": {
+      "user_input": "Check whether this paragraph is factually correct.",
+      "context": null
+    },
+    "provided_sources": [
+      { "source_type": "DOCUMENT", "source_id": "paper.pdf", "uri": null }
+    ]
+  },
+  "run": {
+    "run_id": "run-paper-001",
+    "status": "FINALIZED",
+    "started_at": "2025-12-29T09:00:05Z",
+    "ended_at": "2025-12-29T09:00:40Z",
+    "model_policy": {
+      "preferred_model": "gpt"
+    },
+    "tool_policy": {
+      "allowed_tools": []
+    }
+  },
+  "steps": [
+    {
+      "step_id": "S1",
+      "title": "Extract primary claim",
+      "description": "Identify the main factual claim made in the paragraph.",
+      "status": "VERIFIED",
+      "depends_on": [],
+      "executor": {
+        "type": "MODEL",
+        "name": "gpt",
+        "config": { "temperature": 0.2 }
+      },
+      "evidence_required": false,
+      "evidence": [],
+      "execution": {
+        "input_summary": "Paragraph text",
+        "output": "The paragraph claims that Model X improves accuracy by 15 percent on Dataset Y.",
+        "started_at": "2025-12-29T09:00:06Z",
+        "ended_at": "2025-12-29T09:00:10Z",
+        "prompt_ref": "extract.claim.v1",
+        "tool_call_ref": null
+      },
+      "verification": {
+        "status": "SUPPORTED",
+        "confidence": 0.95,
+        "issues": [],
+        "checked_evidence_ids": [],
+        "verifier": {
+          "type": "RULE",
+          "name": "schema_check",
+          "config": {}
+        },
+        "verified_at": "2025-12-29T09:00:11Z"
+      },
+      "revisions": []
+    },
+    {
+      "step_id": "S2",
+      "title": "Verify claim against paper",
+      "description": "Check whether the paper supports the extracted claim.",
+      "status": "VERIFIED",
+      "depends_on": ["S1"],
+      "executor": {
+        "type": "MODEL",
+        "name": "gpt",
+        "config": { "temperature": 0.2 }
+      },
+      "evidence_required": true,
+      "evidence": [
+        {
+          "evidence_id": "E1",
+          "source": {
+            "source_type": "DOCUMENT",
+            "source_id": "paper.pdf",
+            "uri": null
+          },
+          "content": "Model X achieved a 14.8 percent improvement in accuracy on Dataset Y.",
+          "relevance_score": 0.88,
+          "extracted_at": "2025-12-29T09:00:18Z"
+        }
+      ],
+      "execution": {
+        "input_summary": "Claim plus evidence",
+        "output": "The evidence supports the claim with minor rounding differences.",
+        "started_at": "2025-12-29T09:00:19Z",
+        "ended_at": "2025-12-29T09:00:28Z",
+        "prompt_ref": "verify.claim.v1",
+        "tool_call_ref": null
+      },
+      "verification": {
+        "status": "SUPPORTED",
+        "confidence": 0.90,
+        "issues": ["Reported value rounded from 14.8 to 15 percent."],
+        "checked_evidence_ids": ["E1"],
+        "verifier": {
+          "type": "MODEL",
+          "name": "claude",
+          "config": { "temperature": 0.0 }
+        },
+        "verified_at": "2025-12-29T09:00:30Z"
+      },
+      "revisions": []
+    }
+  ],
+  "contradictions": [],
+  "final_conclusion": {
+    "content": "The paragraph is supported by the paper, with a minor rounding difference.",
+    "confidence": 0.92,
+    "supported_step_ids": ["S1", "S2"],
+    "unresolved_contradictions": [],
+    "finalized_at": "2025-12-29T09:00:39Z"
+  },
+  "memory_writes": [],
+  "audit": {
+    "kernel_version": "0.1",
+    "rsl_version": "0.1",
+    "logs": []
+  }
+}
