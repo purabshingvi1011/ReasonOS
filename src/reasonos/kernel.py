@@ -219,6 +219,8 @@ def run_paper_verification_task(
     document_path: str,
     memory_path: str | None = None,
     policy_path: str = "policies/default_policy.json",
+    enable_memory_writes: bool = True,
+    parent_run_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Run the paper verification task with optional memory integration.
@@ -237,6 +239,8 @@ def run_paper_verification_task(
         paragraph: The paragraph containing the claim to verify.
         document_path: Path to the document file.
         memory_path: Optional path to memory JSON file for persistence.
+        enable_memory_writes: Whether to persist memory writes (default True).
+        parent_run_id: ID of the original run if this is a replay.
 
     Returns:
         A complete RSL document dictionary ready for validation and output.
@@ -760,6 +764,25 @@ def run_paper_verification_task(
         rsl_version=RSL_VERSION,
         logs=audit_logs,
     )
+    
+    # Add audit metadata
+    if parent_run_id:
+        audit["replay_of"] = parent_run_id
+        
+    # Compute run hash
+    import hashlib
+    import json
+    
+    hash_content = {
+        "task_inputs": task["inputs"],
+        "steps_output": [s["execution_output"] for s in [s1, s2, s3]],
+        "steps_verification": [s.get("verification", {}).get("result") for s in [s1, s2, s3]],
+        "final_conclusion": final_conclusion["content"],
+    }
+    
+    # Sort keys for deterministic JSON serialization
+    hash_str = json.dumps(hash_content, sort_keys=True)
+    audit["run_hash"] = hashlib.sha256(hash_str.encode("utf-8")).hexdigest()
 
     rsl_document = {
         "rsl_version": RSL_VERSION,
@@ -773,7 +796,7 @@ def run_paper_verification_task(
     }
 
     # === Persist memory writes ===
-    if memory_path and memory_writes:
+    if memory_path and memory_writes and enable_memory_writes:
         append_memory(memory_path, memory_writes)
 
     return rsl_document
