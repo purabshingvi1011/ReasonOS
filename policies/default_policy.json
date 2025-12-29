@@ -1,0 +1,25 @@
+{
+    "policy_version": "0.1",
+    "domain_defaults": {
+        "research_verification": {
+            "evidence_required_steps": [
+                "S2",
+                "S3"
+            ],
+            "min_confidence_to_finalize": 0.60,
+            "fail_closed_if_unverified": true,
+            "max_revisions_per_step": 1,
+            "contradiction_penalty": 0.25,
+            "revision_penalty": 0.05
+        }
+    },
+    "global_rules": {
+        "block_if_confidence_below": 0.30,
+        "block_message": "ReasonOS policy blocked this output due to insufficient verified confidence.",
+        "allowed_domains": [
+            "tool_reasoning",
+            "research_verification",
+            "document_consistency"
+        ]
+    }
+}

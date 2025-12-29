@@ -18,13 +18,19 @@ from .utils.ids import new_task_id, new_run_id, new_step_id, new_evidence_id
 from .utils.time import now_iso
 from .executors import model_executor, tool_executor
 from .verifiers.rule_verifier import verify_step, verify_claim_support
+from .policy.policy_loader import load_policy
+from .policy.policy_engine import (
+    apply_step_policy,
+    compute_final_confidence,
+    enforce_finalization_policy,
+)
 
 
 KERNEL_VERSION = "0.1.0"
 RSL_VERSION = "0.1"
 
 
-def run_demo_task() -> dict[str, Any]:
+def run_demo_task(policy_path: str = "policies/default_policy.json") -> dict[str, Any]:
     """
     Run the demo loan payment calculation task.
 
@@ -50,6 +56,9 @@ def run_demo_task() -> dict[str, Any]:
         "annual_rate": 0.05,
         "months": 36,
     }
+
+    # Load policy
+    policy = load_policy(policy_path)
 
     # === Step 1: Create task and run ===
     task_id = new_task_id()
@@ -146,6 +155,9 @@ def run_demo_task() -> dict[str, Any]:
     s2["evidence"] = [evidence_e1]
 
     # === Step 6: Verify S1 and S2 ===
+    # Apply policy before verification
+    apply_step_policy(policy, "finance", [s1, s2])
+
     s1_verification = verify_step(s1)
     s1["verification"] = s1_verification
     s1["status"] = "VERIFIED"
@@ -161,12 +173,22 @@ def run_demo_task() -> dict[str, Any]:
 
     # === Step 8: Create final conclusion ===
     payment_value = s2_result["payment_value"]
+    # Compute final confidence
+    final_conf = compute_final_confidence(
+        policy, "finance", 0.95, had_contradiction=False, had_revision=False
+    )
+
     final_conclusion = build_final_conclusion(
         content=f"The monthly payment for the loan is approximately {payment_value} dollars.",
-        confidence=0.95,
+        confidence=final_conf,
         supported_step_ids=[s1_id, s2_id],
         unresolved_contradictions=[],
         finalized_at=ended_at,
+    )
+
+    # Enforce finalization policy
+    final_conclusion = enforce_finalization_policy(
+        policy, "finance", final_conclusion, [s1, s2]
     )
 
     # === Step 9: Assemble full RSL document ===
@@ -194,6 +216,7 @@ def run_paper_verification_task(
     paragraph: str,
     document_path: str,
     memory_path: str | None = None,
+    policy_path: str = "policies/default_policy.json",
 ) -> dict[str, Any]:
     """
     Run the paper verification task with optional memory integration.
@@ -241,6 +264,9 @@ def run_paper_verification_task(
     prior_memory = []
     if memory_path:
         prior_memory = load_memory(memory_path)
+
+    # Load policy
+    policy = load_policy(policy_path)
 
     # === Create task and run ===
     task_id = new_task_id()
@@ -290,6 +316,7 @@ def run_paper_verification_task(
     s1["execution_output"] = paragraph
 
     # Verify S1
+    apply_step_policy(policy, "research_verification", [s1])
     s1_verification = verify_step(s1)
     s1["verification"] = s1_verification
     s1["status"] = "VERIFIED"
@@ -337,6 +364,7 @@ def run_paper_verification_task(
     s2["evidence"] = s2_evidence
 
     # Verify S2
+    apply_step_policy(policy, "research_verification", [s2])
     s2_verification = verify_step(s2)
     s2["verification"] = s2_verification
     s2["status"] = "VERIFIED"
@@ -357,6 +385,9 @@ def run_paper_verification_task(
         evidence_required=True,
         evidence=[],
     )
+
+    # Verify S3
+    apply_step_policy(policy, "research_verification", [s3])
 
     # Execute S3 - use the same evidence from S2
     evidence_sentences = [ev["content"]["sentence"] for ev in s2_evidence]
@@ -515,6 +546,15 @@ def run_paper_verification_task(
     if contradictions:
         final_confidence = max(0.0, min(1.0, verification_confidence - 0.25))
 
+    # Apply policy to confidence
+    final_confidence = compute_final_confidence(
+        policy,
+        "research_verification",
+        final_confidence,
+        had_contradiction=bool(contradictions),
+        had_revision=revision_triggered,
+    )
+
     # Build conclusion based on verification status and contradictions
     if revision_triggered:
         conclusion_content = (
@@ -610,6 +650,14 @@ def run_paper_verification_task(
         supported_step_ids=[s1_id, s2_id, s3_id],
         unresolved_contradictions=[c["contradiction_id"] for c in contradictions],
         finalized_at=ended_at,
+    )
+
+    # Re-apply policy to catch any revision violations
+    apply_step_policy(policy, "research_verification", [s1, s2, s3])
+
+    # Enforce finalization policy
+    final_conclusion = enforce_finalization_policy(
+        policy, "research_verification", final_conclusion, [s1, s2, s3]
     )
 
     # === Build audit logs ===
