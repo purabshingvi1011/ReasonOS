@@ -5,12 +5,13 @@ from typing import Any, Dict, Tuple
 from ..kernel import run_paper_verification_task
 from ..utils.time import now_iso
 
-def replay_run(original_run_path: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def replay_run(original_run_path: str, save_to_disk: bool = True) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Replay a past run deterministically.
     
     Args:
         original_run_path: Path to the original run JSON file.
+        save_to_disk: Whether to save the replayed run to disk (default True).
         
     Returns:
         Tuple containing (original_run_dict, replayed_run_dict).
@@ -52,12 +53,13 @@ def replay_run(original_run_path: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         parent_run_id=original_run["run"]["run_id"] # Link to original
     )
     
-    # Save replay run
-    timestamp = now_iso().replace(":", "").replace("-", "").split(".")[0]
-    replay_filename = run_path.stem + f"_replay_{timestamp}.json"
-    replay_path = run_path.parent / replay_filename
-    
-    with open(replay_path, "w") as f:
-        json.dump(replayed_run, f, indent=2)
+    if save_to_disk:
+        # Save replay run
+        timestamp = now_iso().replace(":", "").replace("-", "").split(".")[0]
+        replay_filename = run_path.stem + f"_replay_{timestamp}.json"
+        replay_path = run_path.parent / replay_filename
+        
+        with open(replay_path, "w") as f:
+            json.dump(replayed_run, f, indent=2)
         
     return original_run, replayed_run
