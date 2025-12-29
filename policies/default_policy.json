@@ -21,5 +21,16 @@
             "research_verification",
             "document_consistency"
         ]
+    },
+    "routing": {
+        "default_model_executor": "gpt_stub",
+        "step_overrides": {
+            "S1": "gpt_stub",
+            "S2": "retriever_stub",
+            "S3": "o3_stub"
+        },
+        "domain_overrides": {
+            "research_verification": "o3_stub"
+        }
     }
 }

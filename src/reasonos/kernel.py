@@ -24,6 +24,8 @@ from .policy.policy_engine import (
     compute_final_confidence,
     enforce_finalization_policy,
 )
+from .routing.router import resolve_and_attach_executor
+from .executors import gpt_stub, o3_stub, retriever_stub
 
 
 KERNEL_VERSION = "0.1.0"
@@ -304,16 +306,27 @@ def run_paper_verification_task(
         started_at=s1_started,
         ended_at=s1_started,
         depends_on=[],
-        executor="model",
+        executor={"type": "MODEL", "name": "unrouted", "config": {}},
         evidence_required=False,
         evidence=[],
     )
     s1["revisions"] = []  # Initialize revisions array
 
-    # Execute S1 - for determinism, output is the paragraph itself
+    # Route executor
+    resolve_and_attach_executor(policy, "research_verification", s1)
+
+    # Execute S1
+    if s1["executor"]["name"] == "gpt_stub":
+        s1_context = {"inputs": {"paragraph": paragraph}}
+        s1_output = gpt_stub.execute(s1, s1_context)
+    else:
+        # Fallback or other executors
+        s1_output = paragraph
+
     s1["status"] = "EXECUTED"
     s1["ended_at"] = now_iso()
-    s1["execution_output"] = paragraph
+    s1["execution_output"] = s1_output
+    s1["execution"] = {"executor_used": s1["executor"]["name"]}
 
     # Verify S1
     apply_step_policy(policy, "research_verification", [s1])
@@ -333,13 +346,29 @@ def run_paper_verification_task(
         started_at=s2_started,
         ended_at=s2_started,
         depends_on=[s1_id],
-        executor="tool",
+        executor={"type": "MODEL", "name": "unrouted", "config": {}},
         evidence_required=True,
         evidence=[],
     )
 
-    # Execute S2 - retrieve evidence
-    evidence_results = retrieve_evidence(paragraph, document_text, k=3)
+    # Route executor
+    resolve_and_attach_executor(policy, "research_verification", s2)
+
+    # Execute S2
+    s2_context = {
+        "inputs": {"paragraph": paragraph},
+        "document_text": document_text
+    }
+    
+    if s2["executor"]["name"] == "retriever_stub":
+        retriever_result = retriever_stub.execute(s2, s2_context)
+        evidence_results = retriever_result["retrieved_evidence"]
+        s2_output = retriever_result["summary"]
+    else:
+        # Fallback to direct tool call if not routed to stub (should not happen in demo)
+        evidence_results = retrieve_evidence(paragraph, document_text, k=3)
+        s2_output = f"Retrieved {len(evidence_results)} evidence sentences"
+
     s2_ended = now_iso()
 
     # Create evidence records for S2
@@ -360,8 +389,9 @@ def run_paper_verification_task(
 
     s2["status"] = "EXECUTED"
     s2["ended_at"] = s2_ended
-    s2["execution_output"] = f"Retrieved {len(evidence_results)} evidence sentences"
+    s2["execution_output"] = s2_output
     s2["evidence"] = s2_evidence
+    s2["execution"] = {"executor_used": s2["executor"]["name"]}
 
     # Verify S2
     apply_step_policy(policy, "research_verification", [s2])
@@ -381,10 +411,13 @@ def run_paper_verification_task(
         started_at=s3_started,
         ended_at=s3_started,
         depends_on=[s1_id, s2_id],
-        executor="model",
+        executor={"type": "MODEL", "name": "unrouted", "config": {}},
         evidence_required=True,
         evidence=[],
     )
+
+    # Route executor
+    resolve_and_attach_executor(policy, "research_verification", s3)
 
     # Verify S3
     apply_step_policy(policy, "research_verification", [s3])
@@ -419,8 +452,16 @@ def run_paper_verification_task(
 
     s3["status"] = "EXECUTED"
     s3["ended_at"] = s3_ended
-    s3["execution_output"] = f"Verification result: {verification_status}"
+    
+    if s3["executor"]["name"] == "o3_stub":
+        # O3 stub returns analysis, but we still need verification status from rule verifier
+        o3_output = o3_stub.execute(s3, {})
+        s3["execution_output"] = f"{o3_output} | Verification result: {verification_status}"
+    else:
+        s3["execution_output"] = f"Verification result: {verification_status}"
+        
     s3["evidence"] = s3_evidence
+    s3["execution"] = {"executor_used": s3["executor"]["name"]}
 
     # Build S3 verification using the claim verification results
     s3_checked_evidence_ids = [ev["evidence_id"] for ev in s3_evidence]
