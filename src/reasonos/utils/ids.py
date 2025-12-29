@@ -37,3 +37,9 @@ def new_contradiction_id() -> str:
     """Generate a new unique contradiction ID."""
     return f"ctr_{uuid4().hex[:12]}"
 
+
+def new_revision_id() -> str:
+    """Generate a new unique revision ID."""
+    return f"rev_{uuid4().hex[:12]}"
+
+

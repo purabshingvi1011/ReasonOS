@@ -206,6 +206,7 @@ def run_paper_verification_task(
         1. S1: Extract the primary claim from the paragraph
         2. S2: Retrieve evidence snippets from the document
         3. S3: Verify whether the evidence supports the claim
+        4. Revision: If contradicted, rewrite claim and update S1
 
     Args:
         paragraph: The paragraph containing the claim to verify.
@@ -221,12 +222,13 @@ def run_paper_verification_task(
     import re
     from pathlib import Path
     from .evidence.sentence_retriever import retrieve_evidence
-    from .utils.ids import new_memory_id
+    from .utils.ids import new_memory_id, new_revision_id
     from .storage.memory_store import load_memory, append_memory
     from .consistency.contradiction_detector import (
         detect_numeric_contradictions,
         extract_percent,
     )
+    from .revision.revision_engine import rewrite_claim
 
     # Read document
     doc_path = Path(document_path)
@@ -280,6 +282,7 @@ def run_paper_verification_task(
         evidence_required=False,
         evidence=[],
     )
+    s1["revisions"] = []  # Initialize revisions array
 
     # Execute S1 - for determinism, output is the paragraph itself
     s1["status"] = "EXECUTED"
@@ -399,10 +402,63 @@ def run_paper_verification_task(
     )
     s3["status"] = "VERIFIED"
 
+    # === Revision Logic ===
+    revision_triggered = False
+    if verification_status == "CONTRADICTED":
+        # Attempt to rewrite claim
+        rewritten_claim = rewrite_claim(paragraph, evidence_sentences)
+        
+        if rewritten_claim != paragraph:
+            revision_triggered = True
+            revised_at = now_iso()
+            revision_id = new_revision_id()
+            
+            # Create revision record
+            new_verification = build_verification(
+                result="SUPPORTED",
+                confidence=min(verification_confidence + 0.3, 0.9),
+                checked_evidence_ids=s3_checked_evidence_ids,
+                verified_at=revised_at,
+                notes="Claim rewritten to match verified evidence",
+            )
+            
+            revision_record = {
+                "revision_id": revision_id,
+                "reason": "Original claim contradicted by evidence",
+                "action": "REWRITE_CLAIM_TO_MATCH_EVIDENCE",
+                "previous_verification_status": "CONTRADICTED",
+                "new_execution_output": rewritten_claim,
+                "new_verification": new_verification,
+                "revised_at": revised_at,
+            }
+            
+            # Update S1
+            s1["revisions"].append(revision_record)
+            s1["execution_output"] = rewritten_claim
+            s1["verification"] = new_verification
+            
+            # Update S3 to reflect the new reality
+            verification_status = "SUPPORTED"
+            verification_confidence = new_verification["confidence"]
+            issues = ["Claim rewritten to match verified evidence"]
+            
+            s3["verification"] = build_verification(
+                result="SUPPORTED",
+                confidence=verification_confidence,
+                checked_evidence_ids=s3_checked_evidence_ids,
+                verified_at=revised_at,
+                notes="Claim revised to match evidence",
+            )
+            s3["execution_output"] = "Verification result: SUPPORTED (after revision)"
+            
+            # Update local claim variable for downstream logic
+            claim = rewritten_claim
+            paragraph = rewritten_claim # Update paragraph so extract_percent works on revised claim
+
     # === Contradiction detection ===
     contradictions = []
     if memory_path and prior_memory:
-        # Extract percent from current claim
+        # Extract percent from current claim (revised if applicable)
         claim_percent = extract_percent(paragraph)
         if claim_percent is not None:
             contradictions = detect_numeric_contradictions(
@@ -460,7 +516,13 @@ def run_paper_verification_task(
         final_confidence = max(0.0, min(1.0, verification_confidence - 0.25))
 
     # Build conclusion based on verification status and contradictions
-    if contradictions and verification_status == "WEAK":
+    if revision_triggered:
+        conclusion_content = (
+            f"The original claim was revised after contradiction. "
+            f"The corrected claim states that {paragraph} "
+            f"Confidence: {final_confidence:.2f}."
+        )
+    elif contradictions and verification_status == "WEAK":
         # Primary reason is document contradiction, memory is secondary
         prior_val = contradictions[0]["prior_value"]
         curr_val = contradictions[0]["current_value"]
@@ -522,6 +584,13 @@ def run_paper_verification_task(
             f"Confidence: {final_confidence:.2f}."
         )
 
+    # Append contradiction notice if detected
+    if contradictions:
+        conclusion_content += (
+            " WARNING: This claim conflicts with prior memory. "
+            f"A numeric discrepancy of {abs(contradictions[0]['current_value'] - contradictions[0]['prior_value']):.1f}% was detected."
+        )
+
     # Add CONTRADICTION memory write if contradictions detected
     if memory_path and contradictions:
         for c in contradictions:
@@ -563,6 +632,16 @@ def run_paper_verification_task(
             },
         },
     ]
+
+    if revision_triggered:
+        audit_logs.append({
+            "event": "REVISION_TRIGGERED",
+            "timestamp": now_iso(),
+            "details": {
+                "step_id": s1_id,
+                "reason": "Original claim contradicted by evidence",
+            },
+        })
 
     if contradictions:
         audit_logs.append({

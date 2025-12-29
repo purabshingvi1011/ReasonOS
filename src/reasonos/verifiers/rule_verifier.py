@@ -127,7 +127,7 @@ def verify_claim_support(
                 f"Numeric mismatch: claim states {claim_percent}%, "
                 f"evidence shows {evidence_percent}%"
             )
-            return ("WEAK", 0.45, issues)
+            return ("CONTRADICTED", 0.95, issues)
 
     # General case - entities match but no numeric comparison
     if scope_limited:

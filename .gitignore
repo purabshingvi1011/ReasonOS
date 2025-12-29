@@ -40,7 +40,7 @@ ENV/
 Thumbs.db
 
 # Run outputs (generated)
-runs/
+runs/run_*.json
 
 # Memory state (generated)
 data/memory.json
