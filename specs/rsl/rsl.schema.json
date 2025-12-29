@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reasonos.org/schemas/rsl-0.1.json",
+  "title": "ReasonOS RSL 0.1",
+  "type": "object",
+  "required": ["rsl_version", "task", "run", "steps", "final_conclusion", "audit"],
+  "properties": {
+    "rsl_version": { "type": "string" },
+    "task": {
+      "type": "object",
+      "required": ["task_id", "objective", "domain", "created_at", "inputs"],
+      "properties": {
+        "task_id": { "type": "string" },
+        "objective": { "type": "string" },
+        "domain": { "type": "string" },
+        "created_at": { "type": "string" },
+        "inputs": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "run": {
+      "type": "object",
+      "required": ["run_id", "status", "started_at"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "status": { "type": "string" },
+        "started_at": { "type": "string" },
+        "ended_at": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "steps": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "final_conclusion": {
+      "type": "object",
+      "required": ["content", "confidence", "supported_step_ids", "unresolved_contradictions", "finalized_at"],
+      "properties": {
+        "content": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_step_ids": { "type": "array", "items": { "type": "string" } },
+        "unresolved_contradictions": { "type": "array", "items": { "type": "string" } },
+        "finalized_at": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "audit": {
+      "type": "object",
+      "required": ["kernel_version", "rsl_version", "logs"],
+      "properties": {
+        "kernel_version": { "type": "string" },
+        "rsl_version": { "type": "string" },
+        "logs": { "type": "array" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
