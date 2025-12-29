@@ -167,6 +167,13 @@ def enforce_finalization_policy(
                 step_action = step.get('action', 'Unknown Action')
                 block_reason = f"Step {step_display_id} {step_action} is WEAK."
                 break
+                
+            if status == "CONTRADICTED" and step.get("evidence_required", False):
+                should_block = True
+                step_display_id = f"S{step.get('step_index', 0) + 1}"
+                step_action = step.get('action', 'Unknown Action')
+                block_reason = f"Step {step_display_id} {step_action} is CONTRADICTED."
+                break
     
     current_confidence = final_conclusion.get("confidence", 0.0)
     

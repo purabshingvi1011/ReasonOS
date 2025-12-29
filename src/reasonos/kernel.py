@@ -258,6 +258,7 @@ def run_paper_verification_task(
         extract_percent,
     )
     from .revision.revision_engine import rewrite_claim
+    from .accounting.ledger import AccountingLedger
 
     # Read document
     doc_path = Path(document_path)
@@ -273,6 +274,12 @@ def run_paper_verification_task(
 
     # Load policy
     policy = load_policy(policy_path)
+
+    # Load policy
+    policy = load_policy(policy_path)
+    
+    # Initialize Accounting Ledger
+    ledger = AccountingLedger()
 
     # === Create task and run ===
     task_id = new_task_id()
@@ -320,12 +327,17 @@ def run_paper_verification_task(
     resolve_and_attach_executor(policy, "research_verification", s1)
 
     # Execute S1
+    # Execute S1
     if s1["executor"]["name"] == "gpt_stub":
         s1_context = {"inputs": {"paragraph": paragraph}}
         s1_output = gpt_stub.execute(s1, s1_context)
+        ledger.add_cost(1.0, "gpt_stub execution")
+        ledger.add_risk(0.2, "gpt_stub execution")
     else:
         # Fallback or other executors
         s1_output = paragraph
+        ledger.add_cost(0.0, "fallback execution") # No cost for fallback
+
 
     s1["status"] = "EXECUTED"
     s1["ended_at"] = now_iso()
@@ -368,10 +380,14 @@ def run_paper_verification_task(
         retriever_result = retriever_stub.execute(s2, s2_context)
         evidence_results = retriever_result["retrieved_evidence"]
         s2_output = retriever_result["summary"]
+        ledger.add_cost(0.5, "retriever_stub execution")
+        ledger.add_risk(0.05, "retriever_stub execution")
     else:
         # Fallback to direct tool call if not routed to stub (should not happen in demo)
         evidence_results = retrieve_evidence(paragraph, document_text, k=3)
         s2_output = f"Retrieved {len(evidence_results)} evidence sentences"
+        ledger.add_cost(0.3, "tool execution")
+        ledger.add_risk(0.02, "tool execution")
 
     s2_ended = now_iso()
 
@@ -461,11 +477,17 @@ def run_paper_verification_task(
         # O3 stub returns analysis, but we still need verification status from rule verifier
         o3_output = o3_stub.execute(s3, {})
         s3["execution_output"] = f"{o3_output} | Verification result: {verification_status}"
+        ledger.add_cost(2.0, "o3_stub execution")
+        ledger.add_risk(0.1, "o3_stub execution")
     else:
         s3["execution_output"] = f"Verification result: {verification_status}"
+        ledger.add_cost(0.0, "verification execution")
         
     s3["evidence"] = s3_evidence
     s3["execution"] = {"executor_used": s3["executor"]["name"]}
+    
+    # Set base confidence from verification result
+    ledger.set_base_confidence(verification_confidence)
 
     # Build S3 verification using the claim verification results
     s3_checked_evidence_ids = [ev["evidence_id"] for ev in s3_evidence]
@@ -480,7 +502,12 @@ def run_paper_verification_task(
 
     # === Revision Logic ===
     revision_triggered = False
-    if verification_status == "CONTRADICTED":
+    
+    # Check if revision is allowed by policy
+    domain_defaults = policy.get("domain_defaults", {}).get("research_verification", {})
+    max_revisions = domain_defaults.get("max_revisions_per_step", 100)
+    
+    if verification_status == "CONTRADICTED" and max_revisions > 0:
         # Attempt to rewrite claim
         rewritten_claim = rewrite_claim(paragraph, evidence_sentences)
         
@@ -507,6 +534,11 @@ def run_paper_verification_task(
                 "new_verification": new_verification,
                 "revised_at": revised_at,
             }
+            
+            # Accounting for revision
+            ledger.add_cost(0.5, "revision")
+            ledger.add_risk(0.05, "revision")
+            ledger.adjust_confidence(-0.05, "revision", "Revision penalty")
             
             # Update S1
             s1["revisions"].append(revision_record)
@@ -544,6 +576,10 @@ def run_paper_verification_task(
                 unit="%",
                 threshold=0.5,
             )
+            
+    if contradictions:
+        ledger.add_risk(0.3, "contradiction")
+        ledger.adjust_confidence(-0.25, "contradiction", "Contradiction penalty")
 
     # === Build memory writes ===
     memory_writes = []
@@ -587,18 +623,29 @@ def run_paper_verification_task(
                 scope_info = match.group(1)
 
     # Adjust confidence if contradictions detected
-    final_confidence = verification_confidence
-    if contradictions:
-        final_confidence = max(0.0, min(1.0, verification_confidence - 0.25))
+    # We now rely on the ledger for confidence adjustments
+    # final_confidence = verification_confidence
+    # if contradictions:
+    #     final_confidence = max(0.0, min(1.0, verification_confidence - 0.25))
 
     # Apply policy to confidence
-    final_confidence = compute_final_confidence(
+    # final_confidence = compute_final_confidence(...)
+    
+    # Use ledger for final confidence
+    # Check if policy blocked the run (confidence 0.0)
+    policy_confidence = compute_final_confidence(
         policy,
         "research_verification",
-        final_confidence,
+        ledger.final_confidence, # Use ledger's current confidence
         had_contradiction=bool(contradictions),
         had_revision=revision_triggered,
     )
+    
+    if policy_confidence == 0.0 and ledger.final_confidence > 0.0:
+        # Policy blocked it
+        ledger.force_block()
+    
+    final_confidence = round(ledger.final_confidence, 2)
 
     # Build conclusion based on verification status and contradictions
     if revision_triggered:
@@ -607,6 +654,107 @@ def run_paper_verification_task(
             f"The corrected claim states that {paragraph} "
             f"Confidence: {final_confidence:.2f}."
         )
+    elif contradictions and verification_status == "WEAK":
+        # Primary reason is document contradiction, memory is secondary
+        prior_val = contradictions[0]["prior_value"]
+        curr_val = contradictions[0]["current_value"]
+        conclusion_content = (
+            f"The claim is CONTRADICTED by the document, which reports {evidence_percent or prior_val}% "
+            f"rather than {curr_val}%. "
+            f"This also conflicts with prior memory recorded from earlier verified runs. "
+            f"Confidence: {final_confidence:.2f}."
+        )
+    elif contradictions:
+        # Has contradictions but not WEAK status
+        prior_val = contradictions[0]["prior_value"]
+        curr_val = contradictions[0]["current_value"]
+        conclusion_content = (
+            f"The claim is PARTIALLY SUPPORTED but conflicts with prior memory. "
+            f"The document reports {evidence_percent or prior_val}%, "
+            f"which differs from the claimed {curr_val}%. "
+            f"Confidence: {final_confidence:.2f}."
+        )
+    elif verification_status == "SUPPORTED":
+        conclusion_content = (
+            f"The claim is SUPPORTED by the evidence. "
+            f"The document confirms the stated improvement. "
+            f"Confidence: {final_confidence:.2f}."
+        )
+    elif verification_status == "PARTIALLY_SUPPORTED":
+        if evidence_percent and scope_info:
+            conclusion_content = (
+                f"The claim is PARTIALLY SUPPORTED. "
+                f"The evidence reports {evidence_percent}% {scope_info}, "
+                f"which is close to the claimed value but not identical "
+                f"and does not generalize beyond that scope. "
+                f"Confidence: {final_confidence:.2f}."
+            )
+        elif evidence_percent:
+            conclusion_content = (
+                f"The claim is PARTIALLY SUPPORTED. "
+                f"The evidence reports {evidence_percent}%, "
+                f"which differs slightly from the claimed value. "
+                f"Confidence: {final_confidence:.2f}."
+            )
+        elif scope_info:
+            conclusion_content = (
+                f"The claim is PARTIALLY SUPPORTED. "
+                f"The evidence is limited to {scope_info} "
+                f"and may not generalize beyond that scope. "
+                f"Confidence: {final_confidence:.2f}."
+            )
+        else:
+            conclusion_content = (
+                f"The claim is PARTIALLY SUPPORTED. "
+                f"Some aspects of the claim could not be fully verified. "
+                f"Confidence: {final_confidence:.2f}."
+            )
+    else:
+        conclusion_content = (
+            f"The claim has WEAK support. "
+            f"The evidence does not adequately support the stated claim. "
+            f"Confidence: {final_confidence:.2f}."
+        )
+
+    # Append contradiction notice if detected
+    if contradictions:
+        conclusion_content += (
+            " WARNING: This claim conflicts with prior memory. "
+            f"A numeric discrepancy of {abs(contradictions[0]['current_value'] - contradictions[0]['prior_value']):.1f}% was detected."
+        )
+
+    # Add CONTRADICTION memory write if contradictions detected
+    if memory_path and contradictions:
+        for c in contradictions:
+            contradiction_memory = {
+                "memory_id": new_memory_id(),
+                "type": "CONTRADICTION",
+                "content": c["description"],
+                "confidence": 0.90,
+                "derived_from_step_ids": [s3_id],
+                "written_at": now_iso(),
+            }
+            memory_writes.append(contradiction_memory)
+
+    final_conclusion = build_final_conclusion(
+        content=conclusion_content,
+        confidence=final_confidence,
+        supported_step_ids=[s1_id, s2_id, s3_id],
+        unresolved_contradictions=[c["contradiction_id"] for c in contradictions],
+        finalized_at=ended_at,
+    )
+
+    # Re-apply policy to catch any revision violations
+    apply_step_policy(policy, "research_verification", [s1, s2, s3])
+
+    # Enforce finalization policy
+    final_conclusion = enforce_finalization_policy(
+        policy, "research_verification", final_conclusion, [s1, s2, s3]
+    )
+    
+    # Sync ledger with final conclusion if blocked
+    if final_conclusion["confidence"] == 0.0 and ledger.final_confidence > 0.0:
+        ledger.force_block()
     elif contradictions and verification_status == "WEAK":
         # Primary reason is document contradiction, memory is secondary
         prior_val = contradictions[0]["prior_value"]
@@ -793,6 +941,7 @@ def run_paper_verification_task(
         "final_conclusion": final_conclusion,
         "memory_writes": memory_writes,
         "audit": audit,
+        "accounting": ledger.get_snapshot(),
     }
 
     # === Persist memory writes ===
