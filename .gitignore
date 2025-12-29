@@ -38,3 +38,6 @@ ENV/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Run outputs (generated)
+runs/

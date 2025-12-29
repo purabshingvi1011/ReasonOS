@@ -1,0 +1,5 @@
+On Dataset Y, Model X achieved a 14.8 percent improvement in accuracy in the indoor setting.
+This result was measured using the standard evaluation protocol with 1000 test samples.
+The improvement was consistent across multiple runs with low variance.
+No results are reported for the outdoor setting due to environmental constraints.
+Additional experiments on Dataset Z showed similar trends under controlled conditions.
