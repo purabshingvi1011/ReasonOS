@@ -193,11 +193,14 @@ def run_demo_task() -> dict[str, Any]:
 def run_paper_verification_task(
     paragraph: str,
     document_path: str,
+    memory_path: str | None = None,
 ) -> dict[str, Any]:
     """
-    Run the paper verification task.
+    Run the paper verification task with optional memory integration.
 
     Verifies a claim paragraph against evidence from a document.
+    When memory_path is provided, reads prior memory, detects contradictions,
+    and writes new memory facts.
 
     Pipeline:
         1. S1: Extract the primary claim from the paragraph
@@ -207,6 +210,7 @@ def run_paper_verification_task(
     Args:
         paragraph: The paragraph containing the claim to verify.
         document_path: Path to the document file.
+        memory_path: Optional path to memory JSON file for persistence.
 
     Returns:
         A complete RSL document dictionary ready for validation and output.
@@ -214,8 +218,15 @@ def run_paper_verification_task(
     Raises:
         FileNotFoundError: If the document file does not exist.
     """
+    import re
     from pathlib import Path
     from .evidence.sentence_retriever import retrieve_evidence
+    from .utils.ids import new_memory_id
+    from .storage.memory_store import load_memory, append_memory
+    from .consistency.contradiction_detector import (
+        detect_numeric_contradictions,
+        extract_percent,
+    )
 
     # Read document
     doc_path = Path(document_path)
@@ -223,6 +234,11 @@ def run_paper_verification_task(
         raise FileNotFoundError(f"Document not found: {document_path}")
 
     document_text = doc_path.read_text(encoding="utf-8")
+
+    # === Load prior memory if path provided ===
+    prior_memory = []
+    if memory_path:
+        prior_memory = load_memory(memory_path)
 
     # === Create task and run ===
     task_id = new_task_id()
@@ -383,78 +399,147 @@ def run_paper_verification_task(
     )
     s3["status"] = "VERIFIED"
 
+    # === Contradiction detection ===
+    contradictions = []
+    if memory_path and prior_memory:
+        # Extract percent from current claim
+        claim_percent = extract_percent(paragraph)
+        if claim_percent is not None:
+            contradictions = detect_numeric_contradictions(
+                memory_items=prior_memory,
+                current_subject="Model X Dataset Y",
+                current_value=claim_percent,
+                unit="%",
+                threshold=0.5,
+            )
+
+    # === Build memory writes ===
+    memory_writes = []
+    if memory_path and verification_status in ("SUPPORTED", "PARTIALLY_SUPPORTED"):
+        # Build a normalized fact from evidence
+        # Use the first evidence sentence as the primary fact
+        if evidence_sentences:
+            fact_content = evidence_sentences[0]
+        else:
+            fact_content = paragraph
+
+        memory_write = {
+            "memory_id": new_memory_id(),
+            "type": "FACT",
+            "content": fact_content,
+            "confidence": verification_confidence,
+            "derived_from_step_ids": [s2_id, s3_id],
+            "written_at": now_iso(),
+        }
+        memory_writes.append(memory_write)
+
     # === Finalize run ===
     ended_at = now_iso()
     run["status"] = "FINALIZED"
     run["ended_at"] = ended_at
 
     # === Create final conclusion with readable format ===
-    # Build issue description dynamically based on detected issues
-    issue_parts = []
+    # Extract evidence percent and scope info from issues
     evidence_percent = None
     scope_info = None
+    claim_percent = extract_percent(paragraph) if memory_path else None
 
     for issue in issues:
         if "evidence shows" in issue:
-            # Extract the evidence percent from the issue string
-            import re
             match = re.search(r"evidence shows (\d+\.?\d*)%", issue)
             if match:
                 evidence_percent = match.group(1)
         if "Scope limitation" in issue:
-            # Extract scope info
             match = re.search(r"'([^']+)'", issue)
             if match:
                 scope_info = match.group(1)
 
-    if verification_status == "SUPPORTED":
+    # Adjust confidence if contradictions detected
+    final_confidence = verification_confidence
+    if contradictions:
+        final_confidence = max(0.0, min(1.0, verification_confidence - 0.25))
+
+    # Build conclusion based on verification status and contradictions
+    if contradictions and verification_status == "WEAK":
+        # Primary reason is document contradiction, memory is secondary
+        prior_val = contradictions[0]["prior_value"]
+        curr_val = contradictions[0]["current_value"]
+        conclusion_content = (
+            f"The claim is CONTRADICTED by the document, which reports {evidence_percent or prior_val}% "
+            f"rather than {curr_val}%. "
+            f"This also conflicts with prior memory recorded from earlier verified runs. "
+            f"Confidence: {final_confidence:.2f}."
+        )
+    elif contradictions:
+        # Has contradictions but not WEAK status
+        prior_val = contradictions[0]["prior_value"]
+        curr_val = contradictions[0]["current_value"]
+        conclusion_content = (
+            f"The claim is PARTIALLY SUPPORTED but conflicts with prior memory. "
+            f"The document reports {evidence_percent or prior_val}%, "
+            f"which differs from the claimed {curr_val}%. "
+            f"Confidence: {final_confidence:.2f}."
+        )
+    elif verification_status == "SUPPORTED":
         conclusion_content = (
             f"The claim is SUPPORTED by the evidence. "
             f"The document confirms the stated improvement. "
-            f"Confidence: {verification_confidence}."
+            f"Confidence: {final_confidence:.2f}."
         )
     elif verification_status == "PARTIALLY_SUPPORTED":
-        # Build a natural language summary from the issues
         if evidence_percent and scope_info:
             conclusion_content = (
                 f"The claim is PARTIALLY SUPPORTED. "
                 f"The evidence reports {evidence_percent}% {scope_info}, "
                 f"which is close to the claimed value but not identical "
                 f"and does not generalize beyond that scope. "
-                f"Confidence: {verification_confidence}."
+                f"Confidence: {final_confidence:.2f}."
             )
         elif evidence_percent:
             conclusion_content = (
                 f"The claim is PARTIALLY SUPPORTED. "
                 f"The evidence reports {evidence_percent}%, "
                 f"which differs slightly from the claimed value. "
-                f"Confidence: {verification_confidence}."
+                f"Confidence: {final_confidence:.2f}."
             )
         elif scope_info:
             conclusion_content = (
                 f"The claim is PARTIALLY SUPPORTED. "
                 f"The evidence is limited to {scope_info} "
                 f"and may not generalize beyond that scope. "
-                f"Confidence: {verification_confidence}."
+                f"Confidence: {final_confidence:.2f}."
             )
         else:
             conclusion_content = (
                 f"The claim is PARTIALLY SUPPORTED. "
                 f"Some aspects of the claim could not be fully verified. "
-                f"Confidence: {verification_confidence}."
+                f"Confidence: {final_confidence:.2f}."
             )
     else:
         conclusion_content = (
             f"The claim has WEAK support. "
             f"The evidence does not adequately support the stated claim. "
-            f"Confidence: {verification_confidence}."
+            f"Confidence: {final_confidence:.2f}."
         )
+
+    # Add CONTRADICTION memory write if contradictions detected
+    if memory_path and contradictions:
+        for c in contradictions:
+            contradiction_memory = {
+                "memory_id": new_memory_id(),
+                "type": "CONTRADICTION",
+                "content": c["description"],
+                "confidence": 0.90,
+                "derived_from_step_ids": [s3_id],
+                "written_at": now_iso(),
+            }
+            memory_writes.append(contradiction_memory)
 
     final_conclusion = build_final_conclusion(
         content=conclusion_content,
-        confidence=verification_confidence,
+        confidence=final_confidence,
         supported_step_ids=[s1_id, s2_id, s3_id],
-        unresolved_contradictions=[],
+        unresolved_contradictions=[c["contradiction_id"] for c in contradictions],
         finalized_at=ended_at,
     )
 
@@ -479,6 +564,28 @@ def run_paper_verification_task(
         },
     ]
 
+    if contradictions:
+        audit_logs.append({
+            "event": "CONTRADICTION_DETECTED",
+            "timestamp": now_iso(),
+            "details": {
+                "count": len(contradictions),
+                "severity": "HIGH",
+                "contradiction_ids": [c["contradiction_id"] for c in contradictions],
+                "threshold_used": 0.5,
+            },
+        })
+
+    if memory_writes:
+        audit_logs.append({
+            "event": "MEMORY_WRITTEN",
+            "timestamp": now_iso(),
+            "details": {
+                "count": len(memory_writes),
+                "types": list(set(m["type"] for m in memory_writes)),
+            },
+        })
+
     # === Assemble full RSL document ===
     audit = build_audit(
         kernel_version=KERNEL_VERSION,
@@ -491,10 +598,16 @@ def run_paper_verification_task(
         "task": task,
         "run": run,
         "steps": [s1, s2, s3],
-        "contradictions": [],
+        "contradictions": contradictions,
         "final_conclusion": final_conclusion,
-        "memory_writes": [],
+        "memory_writes": memory_writes,
         "audit": audit,
     }
 
+    # === Persist memory writes ===
+    if memory_path and memory_writes:
+        append_memory(memory_path, memory_writes)
+
     return rsl_document
+
+

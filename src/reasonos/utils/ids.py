@@ -26,3 +26,14 @@ def new_evidence_id() -> str:
 def new_event_id() -> str:
     """Generate a new unique event ID."""
     return f"evt_{uuid4().hex[:12]}"
+
+
+def new_memory_id() -> str:
+    """Generate a new unique memory ID."""
+    return f"mem_{uuid4().hex[:12]}"
+
+
+def new_contradiction_id() -> str:
+    """Generate a new unique contradiction ID."""
+    return f"ctr_{uuid4().hex[:12]}"
+
