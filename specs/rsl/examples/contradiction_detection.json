@@ -1,0 +1,152 @@
+{
+  "rsl_version": "0.1",
+  "task": {
+    "task_id": "task-contradiction-001",
+    "objective": "Detect contradictions between two policy documents.",
+    "domain": "document_consistency",
+    "created_at": "2025-12-29T11:00:00Z",
+    "inputs": {
+      "user_input": "Check these documents for conflicting statements.",
+      "context": null
+    },
+    "provided_sources": [
+      { "source_type": "DOCUMENT", "source_id": "policy_v1.pdf", "uri": null },
+      { "source_type": "DOCUMENT", "source_id": "policy_v2.pdf", "uri": null }
+    ]
+  },
+  "run": {
+    "run_id": "run-contradiction-001",
+    "status": "FINALIZED",
+    "started_at": "2025-12-29T11:00:05Z",
+    "ended_at": "2025-12-29T11:00:45Z",
+    "model_policy": {
+      "preferred_model": "gpt"
+    },
+    "tool_policy": {
+      "allowed_tools": []
+    }
+  },
+  "steps": [
+    {
+      "step_id": "S1",
+      "title": "Extract key rules from policy v1",
+      "description": "Identify constraints defined in the first policy.",
+      "status": "VERIFIED",
+      "depends_on": [],
+      "executor": {
+        "type": "MODEL",
+        "name": "gpt",
+        "config": { "temperature": 0.2 }
+      },
+      "evidence_required": true,
+      "evidence": [
+        {
+          "evidence_id": "E1",
+          "source": {
+            "source_type": "DOCUMENT",
+            "source_id": "policy_v1.pdf",
+            "uri": null
+          },
+          "content": "Employees must submit expense reports within 30 days.",
+          "relevance_score": 0.85,
+          "extracted_at": "2025-12-29T11:00:12Z"
+        }
+      ],
+      "execution": {
+        "input_summary": "Policy v1 text",
+        "output": "Policy v1 requires expense reports within 30 days.",
+        "started_at": "2025-12-29T11:00:13Z",
+        "ended_at": "2025-12-29T11:00:18Z",
+        "prompt_ref": "extract.rules.v1",
+        "tool_call_ref": null
+      },
+      "verification": {
+        "status": "SUPPORTED",
+        "confidence": 0.92,
+        "issues": [],
+        "checked_evidence_ids": ["E1"],
+        "verifier": {
+          "type": "RULE",
+          "name": "policy_check",
+          "config": {}
+        },
+        "verified_at": "2025-12-29T11:00:19Z"
+      },
+      "revisions": []
+    },
+    {
+      "step_id": "S2",
+      "title": "Extract key rules from policy v2",
+      "description": "Identify constraints defined in the updated policy.",
+      "status": "VERIFIED",
+      "depends_on": [],
+      "executor": {
+        "type": "MODEL",
+        "name": "gpt",
+        "config": { "temperature": 0.2 }
+      },
+      "evidence_required": true,
+      "evidence": [
+        {
+          "evidence_id": "E2",
+          "source": {
+            "source_type": "DOCUMENT",
+            "source_id": "policy_v2.pdf",
+            "uri": null
+          },
+          "content": "Expense reports must be submitted within 45 days.",
+          "relevance_score": 0.87,
+          "extracted_at": "2025-12-29T11:00:25Z"
+        }
+      ],
+      "execution": {
+        "input_summary": "Policy v2 text",
+        "output": "Policy v2 allows expense reports within 45 days.",
+        "started_at": "2025-12-29T11:00:26Z",
+        "ended_at": "2025-12-29T11:00:31Z",
+        "prompt_ref": "extract.rules.v1",
+        "tool_call_ref": null
+      },
+      "verification": {
+        "status": "SUPPORTED",
+        "confidence": 0.91,
+        "issues": [],
+        "checked_evidence_ids": ["E2"],
+        "verifier": {
+          "type": "RULE",
+          "name": "policy_check",
+          "config": {}
+        },
+        "verified_at": "2025-12-29T11:00:32Z"
+      },
+      "revisions": []
+    }
+  ],
+  "contradictions": [
+    {
+      "contradiction_id": "C1",
+      "step_ids": ["S1", "S2"],
+      "description": "Policy v1 requires submission within 30 days, while policy v2 allows 45 days.",
+      "severity": "HIGH",
+      "detected_by": {
+        "type": "MODEL",
+        "name": "claude",
+        "config": {}
+      },
+      "detected_at": "2025-12-29T11:00:35Z"
+    }
+  ],
+  "final_conclusion": {
+    "content": "The two policies contradict each other regarding expense report deadlines.",
+    "confidence": 0.95,
+    "supported_step_ids": ["S1", "S2"],
+    "unresolved_contradictions": ["C1"],
+    "finalized_at": "2025-12-29T11:00:44Z"
+  },
+  "memory_writes": [],
+  "audit": {
+    "kernel_version": "0.1",
+    "rsl_version": "0.1",
+    "logs": []
+  }
+}
