@@ -1,0 +1,108 @@
+{
+  "rsl_version": "0.1",
+  "task": {
+    "task_id": "task_fb5dc8a8de12",
+    "objective": "What is the monthly payment for a 10000 dollar loan at 5 percent annual interest for 3 years?",
+    "domain": "finance",
+    "created_at": "2025-12-29T11:19:40Z",
+    "inputs": {
+      "principal": 10000,
+      "annual_rate": 0.05,
+      "months": 36
+    }
+  },
+  "run": {
+    "run_id": "run_941fd84dcefe",
+    "status": "FINALIZED",
+    "started_at": "2025-12-29T11:19:40Z",
+    "ended_at": "2025-12-29T11:19:40Z",
+    "model_policy": {
+      "provider": "stub",
+      "model": "deterministic"
+    },
+    "tool_policy": {
+      "allowed_tools": [
+        "calculator"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "step_id": "step_49cdcd0563fa",
+      "step_index": 0,
+      "action": "Select the appropriate formula for calculating loan payments",
+      "status": "VERIFIED",
+      "started_at": "2025-12-29T11:19:40Z",
+      "ended_at": "2025-12-29T11:19:40Z",
+      "depends_on": [],
+      "executor": "model",
+      "evidence_required": false,
+      "evidence": [],
+      "execution_output": "Use the standard amortized loan payment formula.",
+      "verification": {
+        "result": "SUPPORTED",
+        "confidence": 0.95,
+        "checked_evidence_ids": [],
+        "verified_at": "2025-12-29T11:19:40Z",
+        "notes": "Verified by structural and logical checks"
+      }
+    },
+    {
+      "step_id": "step_7c813605edd4",
+      "step_index": 1,
+      "action": "Calculate the monthly payment using the amortized loan formula",
+      "status": "VERIFIED",
+      "started_at": "2025-12-29T11:19:40Z",
+      "ended_at": "2025-12-29T11:19:40Z",
+      "depends_on": [
+        "step_49cdcd0563fa"
+      ],
+      "executor": "tool",
+      "evidence_required": true,
+      "evidence": [
+        {
+          "evidence_id": "ev_443e6b54ad52",
+          "source": "calculator_tool",
+          "content": {
+            "tool_call_id": "evt_e51949a77285",
+            "monthly_payment": 299.71,
+            "formatted": "$299.71",
+            "inputs": {
+              "principal": 10000,
+              "annual_rate": 0.05,
+              "months": 36
+            }
+          },
+          "created_at": "2025-12-29T11:19:40Z"
+        }
+      ],
+      "execution_output": "Calculated payment: $299.71",
+      "verification": {
+        "result": "SUPPORTED",
+        "confidence": 0.95,
+        "checked_evidence_ids": [
+          "ev_443e6b54ad52"
+        ],
+        "verified_at": "2025-12-29T11:19:40Z",
+        "notes": "Verified with 1 evidence item(s)"
+      }
+    }
+  ],
+  "contradictions": [],
+  "final_conclusion": {
+    "content": "The monthly payment for the loan is approximately 299.71 dollars.",
+    "confidence": 0.95,
+    "supported_step_ids": [
+      "step_49cdcd0563fa",
+      "step_7c813605edd4"
+    ],
+    "unresolved_contradictions": [],
+    "finalized_at": "2025-12-29T11:19:40Z"
+  },
+  "memory_writes": [],
+  "audit": {
+    "kernel_version": "0.1.0",
+    "rsl_version": "0.1",
+    "logs": []
+  }
+}
